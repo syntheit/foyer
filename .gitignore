@@ -1,0 +1,30 @@
+# Go
+/foyer
+/foyer-*
+.go/
+
+# Frontend
+frontend/node_modules/
+frontend/build/
+frontend/.svelte-kit/
+
+# Nix
+result
+result-*
+.direnv/
+
+# Data
+*.db
+*.db-wal
+*.db-shm
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+
+# Dev
+dev.json
+.dev-jwt-secret
