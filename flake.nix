@@ -11,10 +11,25 @@
       supportedSystems = [
         "x86_64-linux"
         "aarch64-linux"
+        "aarch64-darwin"
       ];
       forAllSystems = nixpkgs.lib.genAttrs supportedSystems;
     in
     {
+      packages = forAllSystems (
+        system:
+        let
+          pkgs = import nixpkgs { inherit system; };
+        in
+        {
+          default = pkgs.callPackage ./nix/package.nix { };
+        }
+      );
+
+      overlays.default = final: _prev: {
+        foyer = self.packages.${final.stdenv.hostPlatform.system}.default;
+      };
+
       devShells = forAllSystems (
         system:
         let
@@ -39,7 +54,5 @@
           };
         }
       );
-
-      nixosModules.default = import ./nix/module.nix;
     };
 }
