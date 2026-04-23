@@ -82,7 +82,7 @@ func main() {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
-	collector := health.NewCollector()
+	collector := health.NewCollector(cfg.TemperatureCommand)
 	go collector.Run(ctx)
 
 	devMode := os.Getenv("FOYER_DEV") == "1"

@@ -118,16 +118,20 @@ type Collector struct {
 	networkHistory []NetworkHistoryEntry
 
 	// Internal state — only accessed from the collect goroutine
-	prevCPU        *cpuTicks
-	prevNet        map[string]netCounters
-	lastDocker     time.Time
-	cachedDocker   *DockerStats
+	prevCPU            *cpuTicks
+	prevNet            map[string]netCounters
+	lastDocker         time.Time
+	cachedDocker       *DockerStats
+	temperatureCommand string
+	lastTempCmd        time.Time
+	cachedTempCmd      TempStats
 }
 
-func NewCollector() *Collector {
+func NewCollector(temperatureCommand string) *Collector {
 	return &Collector{
-		networkHistory: make([]NetworkHistoryEntry, 0, networkHistorySize),
-		prevNet:        make(map[string]netCounters),
+		networkHistory:     make([]NetworkHistoryEntry, 0, networkHistorySize),
+		prevNet:            make(map[string]netCounters),
+		temperatureCommand: temperatureCommand,
 	}
 }
 
@@ -170,7 +174,15 @@ func (c *Collector) collect() {
 	stats.Memory = collectMemory()
 	stats.Disk = collectDisk()
 	stats.Network, c.prevNet = collectNetwork(c.prevNet)
-	stats.Temperatures = collectTemperatures()
+	if c.temperatureCommand != "" {
+		if time.Since(c.lastTempCmd) >= dockerInterval {
+			c.cachedTempCmd = collectTemperatureCommand(c.temperatureCommand)
+			c.lastTempCmd = now
+		}
+		stats.Temperatures = c.cachedTempCmd
+	} else {
+		stats.Temperatures = collectTemperatures()
+	}
 	stats.GPU = collectGPU()
 	if stats.GPU != nil {
 		stats.Temperatures.GPU = stats.GPU.Temperature

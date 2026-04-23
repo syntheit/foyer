@@ -1,9 +1,13 @@
 package health
 
 import (
+	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 )
 
 func collectTemperatures() TempStats {
@@ -61,4 +65,19 @@ func collectTemperatures() TempStats {
 	}
 
 	return stats
+}
+
+// collectTemperatureCommand runs an external command that outputs CPU temp as an integer (°C).
+func collectTemperatureCommand(command string) TempStats {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "sh", "-c", command).Output()
+	if err != nil {
+		return TempStats{}
+	}
+	temp, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil {
+		return TempStats{}
+	}
+	return TempStats{CPU: temp}
 }

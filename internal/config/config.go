@@ -23,6 +23,7 @@ type Config struct {
 	Services     []ServiceConfig `json:"services"`
 	Hosts        []HostConfig    `json:"hosts"`
 	Jellyfin     *JellyfinConfig `json:"jellyfin"`
+	TemperatureCommand string     `json:"temperature_command"`
 }
 
 type UserConfig struct {
