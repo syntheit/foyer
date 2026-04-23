@@ -33,10 +33,11 @@ type CPUStats struct {
 }
 
 type MemoryStats struct {
-	TotalBytes     uint64  `json:"total_bytes"`
-	UsedBytes      uint64  `json:"used_bytes"`
-	AvailableBytes uint64  `json:"available_bytes"`
-	UsagePercent   float64 `json:"usage_percent"`
+	TotalBytes        uint64  `json:"total_bytes"`
+	UsedBytes         uint64  `json:"used_bytes"`
+	AvailableBytes    uint64  `json:"available_bytes"`
+	UsagePercent      float64 `json:"usage_percent"`
+	CompressedPercent float64 `json:"compressed_percent"`
 }
 
 type DiskStats struct {
