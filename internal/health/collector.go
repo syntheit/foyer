@@ -3,8 +3,11 @@ package health
 import (
 	"context"
 	"log/slog"
+	"net/http"
 	"sync"
 	"time"
+
+	"github.com/dmiller/foyer/internal/config"
 )
 
 const (
@@ -15,15 +18,16 @@ const (
 
 // Stats is the full system health snapshot.
 type Stats struct {
-	Timestamp    time.Time    `json:"timestamp"`
-	CPU          CPUStats     `json:"cpu"`
-	Memory       MemoryStats  `json:"memory"`
-	Disk         DiskStats    `json:"disk"`
-	Network      NetworkStats `json:"network"`
-	Temperatures TempStats    `json:"temperatures"`
-	GPU          *GPUStats    `json:"gpu"`
-	Docker       *DockerStats `json:"docker"`
-	System       SystemStats  `json:"system"`
+	Timestamp    time.Time     `json:"timestamp"`
+	CPU          CPUStats      `json:"cpu"`
+	Memory       MemoryStats   `json:"memory"`
+	Disk         DiskStats     `json:"disk"`
+	Network      NetworkStats  `json:"network"`
+	Temperatures TempStats     `json:"temperatures"`
+	GPU          *GPUStats     `json:"gpu"`
+	Docker       *DockerStats  `json:"docker"`
+	Services     ServicesStats `json:"services"`
+	System       SystemStats   `json:"system"`
 }
 
 type CPUStats struct {
@@ -126,13 +130,17 @@ type Collector struct {
 	temperatureCommand string
 	lastTempCmd        time.Time
 	cachedTempCmd      TempStats
+	cfg                *config.Config
+	servicesClient     *http.Client
 }
 
-func NewCollector(temperatureCommand string) *Collector {
+func NewCollector(cfg *config.Config) *Collector {
 	return &Collector{
 		networkHistory:     make([]NetworkHistoryEntry, 0, networkHistorySize),
 		prevNet:            make(map[string]netCounters),
-		temperatureCommand: temperatureCommand,
+		temperatureCommand: cfg.TemperatureCommand,
+		cfg:                cfg,
+		servicesClient:     &http.Client{Timeout: 5 * time.Second},
 	}
 }
 
@@ -201,6 +209,7 @@ func (c *Collector) collect() {
 		c.lastDocker = now
 	}
 	stats.Docker = c.cachedDocker
+	stats.Services = CollectServices(c.cfg, c.servicesClient)
 
 	c.mu.Lock()
 	c.current = stats

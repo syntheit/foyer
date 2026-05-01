@@ -23,7 +23,12 @@ type Config struct {
 	Services     []ServiceConfig `json:"services"`
 	Hosts        []HostConfig    `json:"hosts"`
 	Jellyfin     *JellyfinConfig `json:"jellyfin"`
+	Minecraft    *MinecraftConfig `json:"minecraft"`
 	TemperatureCommand string     `json:"temperature_command"`
+}
+
+type MinecraftConfig struct {
+	Address string `json:"address"` // host:port, e.g. "localhost:25565"
 }
 
 type UserConfig struct {

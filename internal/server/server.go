@@ -62,6 +62,7 @@ func New(cfg *config.Config, db *sql.DB, collector *health.Collector, hub *ws.Hu
 			r.Get("/health/gpu", healthHandler.GetGPU)
 			r.Get("/health/docker", healthHandler.GetDocker)
 			r.Get("/health/system", healthHandler.GetSystem)
+			r.Get("/health/services", servicesHandler(collector))
 		})
 
 		// Webhook receiver (API key or SSH key auth)
@@ -97,7 +98,7 @@ func New(cfg *config.Config, db *sql.DB, collector *health.Collector, hub *ws.Hu
 				r.Get("/webhooks/feed", webhookFeedHandler(db))
 
 				if cfg.Jellyfin != nil {
-					r.Get("/jellyfin/streams", jellyfinStreamsHandler(cfg.Jellyfin))
+					r.Get("/jellyfin/streams", jellyfinStreamsHandler(collector))
 				}
 
 				r.Get("/hosts", hostsHandler(cfg.Hosts))
@@ -638,39 +639,26 @@ func deleteMessageHandler(db *sql.DB) http.HandlerFunc {
 	}
 }
 
-// --- Jellyfin Handler ---
+// --- Services Handler (jellyfin streams + minecraft players, etc.) ---
+//
+// Reads from the Collector's cached snapshot rather than probing on demand —
+// the Collector already runs CollectServices on its tick, so multiple polling
+// clients share the same upstream calls.
 
-func jellyfinStreamsHandler(cfg *config.JellyfinConfig) http.HandlerFunc {
+func servicesHandler(collector *health.Collector) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		req, err := http.NewRequestWithContext(r.Context(), "GET", cfg.URL+"/Sessions", nil)
-		if err != nil {
-			http.Error(w, "internal error", http.StatusInternalServerError)
-			return
-		}
-		req.Header.Set("X-Emby-Token", cfg.APIKey)
+		writeJSON(w, collector.Current().Services)
+	}
+}
 
-		resp, err := httpClient.Do(req)
-		if err != nil {
+func jellyfinStreamsHandler(collector *health.Collector) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		j := collector.Current().Services.Jellyfin
+		if j == nil {
 			http.Error(w, "jellyfin unavailable", http.StatusBadGateway)
 			return
 		}
-		defer resp.Body.Close()
-
-		var sessions []struct {
-			NowPlayingItem interface{} `json:"NowPlayingItem"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&sessions); err != nil {
-			http.Error(w, "failed to parse jellyfin response", http.StatusBadGateway)
-			return
-		}
-
-		active := 0
-		for _, s := range sessions {
-			if s.NowPlayingItem != nil {
-				active++
-			}
-		}
-		writeJSON(w, map[string]int{"active_streams": active})
+		writeJSON(w, map[string]int{"active_streams": j.ActiveStreams})
 	}
 }
 
