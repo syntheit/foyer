@@ -45,7 +45,7 @@ buildGoModule {
   version = "0.1.0";
   src = ../.;
 
-  vendorHash = "sha256-1gFMZ5zn/xvLiNXY9MeSzFTdinG39mDT+TcPIbvnAuM=";
+  vendorHash = "sha256-3Rc8uI+BLwS2/QO3FTRrR094KN+2BMrozlvoUiRSDvI=";
 
   preBuild = lib.optionalString stdenv.isLinux ''
     cp -r ${frontend} frontend/build
