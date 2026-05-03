@@ -5,7 +5,7 @@
 	import StatsCard from '$lib/components/dashboard/StatsCard.svelte';
 	import DiskPools from '$lib/components/dashboard/DiskPools.svelte';
 	import GpuCard from '$lib/components/dashboard/GpuCard.svelte';
-	import { Cpu, MemoryStick, Clock, Thermometer, Box, ArrowDownUp, Tv } from '@lucide/svelte';
+	import { Cpu, MemoryStick, Clock, Thermometer, ArrowDownUp, Tv, Gamepad2, Monitor, Server } from '@lucide/svelte';
 	import { api } from '$lib/api/client';
 
 	const stats = $derived(getStats());
@@ -19,11 +19,6 @@
 			return total > bestTotal ? iface : best;
 		}, stats.network.interfaces[0]);
 	});
-
-	const runningContainers = $derived(
-		stats?.docker?.containers?.filter((c) => c.state === 'running').length ?? 0
-	);
-	const totalContainers = $derived(stats?.docker?.containers?.length ?? 0);
 
 	// Jellyfin streams
 	let jellyfinStreams = $state<number | null>(null);
@@ -40,6 +35,10 @@
 		const interval = setInterval(fetchStreams, 30000);
 		return () => clearInterval(interval);
 	});
+
+	const minecraft = $derived(stats?.services?.minecraft);
+	const vms = $derived(stats?.vms);
+	const gpu = $derived(stats?.gpu);
 </script>
 
 <svelte:head>
@@ -91,7 +90,7 @@
 			</StatsCard>
 		</div>
 
-		<!-- Second row: Network, Containers, Jellyfin -->
+		<!-- Second row: Network, GPU, VMs, Jellyfin, Minecraft -->
 		<div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
 			<StatsCard
 				title="Network"
@@ -101,21 +100,43 @@
 				{#snippet icon()}<ArrowDownUp class="h-4 w-4" />{/snippet}
 			</StatsCard>
 
-			<StatsCard
-				title="Containers"
-				value="{runningContainers}/{totalContainers}"
-				subtitle="running"
-			>
-				{#snippet icon()}<Box class="h-4 w-4" />{/snippet}
-			</StatsCard>
+			{#if gpu}
+				<StatsCard
+					title="GPU"
+					value={formatPercent(gpu.utilization_percent)}
+					subtitle="{Math.round(gpu.memory_used_mb / 1024)}/{Math.round(gpu.memory_total_mb / 1024)} GB · {(gpu.power_watts ?? 0).toFixed(0)}W"
+				>
+					{#snippet icon()}<Monitor class="h-4 w-4" />{/snippet}
+				</StatsCard>
+			{/if}
+
+			{#if vms && vms.total > 0}
+				<StatsCard
+					title="VMs"
+					value={`${vms.running}/${vms.total}`}
+					subtitle={`running · ${vms.total_vcpus} vCPU · ${(vms.total_memory_mb / 1024).toFixed(1)} GB`}
+				>
+					{#snippet icon()}<Server class="h-4 w-4" />{/snippet}
+				</StatsCard>
+			{/if}
 
 			{#if jellyfinStreams !== null}
 				<StatsCard
 					title="Jellyfin"
-					value="{jellyfinStreams}"
+					value={String(jellyfinStreams)}
 					subtitle={jellyfinStreams === 1 ? 'active stream' : 'active streams'}
 				>
 					{#snippet icon()}<Tv class="h-4 w-4" />{/snippet}
+				</StatsCard>
+			{/if}
+
+			{#if minecraft}
+				<StatsCard
+					title="Minecraft"
+					value={minecraft.online ? `${minecraft.players}/${minecraft.max_players}` : 'offline'}
+					subtitle={minecraft.online ? (minecraft.version ?? 'online') : undefined}
+				>
+					{#snippet icon()}<Gamepad2 class="h-4 w-4" />{/snippet}
 				</StatsCard>
 			{/if}
 		</div>

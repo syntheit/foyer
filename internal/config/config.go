@@ -24,6 +24,9 @@ type Config struct {
 	Jellyfin     *JellyfinConfig `json:"jellyfin"`
 	Minecraft    *MinecraftConfig `json:"minecraft"`
 	TemperatureCommand string     `json:"temperature_command"`
+	// VMControllerSocket is the Unix socket path for foyer-vm-controller.
+	// Empty string means the VM feature is disabled.
+	VMControllerSocket string `json:"vm_controller_socket"`
 }
 
 type MinecraftConfig struct {

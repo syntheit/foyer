@@ -4,13 +4,13 @@ import (
 	"database/sql"
 	"embed"
 	"encoding/json"
-	"fmt"
 	"io"
 	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
 	"path"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -23,6 +23,7 @@ import (
 	"github.com/dmiller/foyer/internal/auth"
 	"github.com/dmiller/foyer/internal/config"
 	"github.com/dmiller/foyer/internal/health"
+	"github.com/dmiller/foyer/internal/vmcontrol"
 	"github.com/dmiller/foyer/internal/ws"
 )
 
@@ -43,13 +44,15 @@ func New(cfg *config.Config, db *sql.DB, collector *health.Collector, hub *ws.Hu
 	healthHandler := health.NewHandler(collector)
 	sshStore := auth.NewSSHKeyStore(cfg.AuthorizedKeys)
 	apiAuthMiddleware := auth.CombinedAuthMiddleware(sshStore, cfg.APIKeys)
+	vmClient := vmcontrol.NewClient(cfg.VMControllerSocket)
 
 	r.Route("/api", func(r chi.Router) {
 		// Auth routes (public)
 		r.Post("/auth/login", loginHandler(authService, db))
 		r.Post("/auth/register", registerHandler(authService, db, cfg))
 		r.Post("/auth/logout", logoutHandler(authService))
-		r.Get("/auth/signups", signupsEnabledHandler(cfg))
+		r.Get("/auth/signups", signupsEnabledHandler(cfg, db))
+		r.Get("/auth/invites/validate", validateInviteHandler(db))
 
 		// Health API (API key or SSH key auth)
 		r.Group(func(r chi.Router) {
@@ -80,6 +83,7 @@ func New(cfg *config.Config, db *sql.DB, collector *health.Collector, hub *ws.Hu
 				r.Get("/auth/me", meHandler())
 
 				r.Get("/services", listServicesHandler(db))
+				r.Get("/services/{id}/recent", serviceRecentHandler(db))
 				r.Get("/services/{id}/history", serviceHistoryHandler(db))
 
 				r.Get("/messages", listMessagesHandler(db))
@@ -93,6 +97,7 @@ func New(cfg *config.Config, db *sql.DB, collector *health.Collector, hub *ws.Hu
 
 				r.Post("/pastes", createPasteHandler(db))
 				r.Get("/pastes", listPastesHandler(db))
+				r.Put("/pastes/{id}", updatePasteHandler(db))
 				r.Delete("/pastes/{id}", deletePasteHandler(db))
 
 				r.Get("/webhooks/feed", webhookFeedHandler(db))
@@ -105,6 +110,34 @@ func New(cfg *config.Config, db *sql.DB, collector *health.Collector, hub *ws.Hu
 
 				r.Get("/tools/ip", ipLookupSelfHandler())
 				r.Get("/tools/ip/{address}", ipLookupHandler())
+
+				// VM access for assigned users. Each handler re-validates the
+				// assignment against vm_assignments before doing anything.
+				r.Get("/vms", listMyVMsHandler(db, vmClient))
+				r.Get("/vms/{vm}/stats", getMyVMStatsHandler(db, vmClient))
+				r.Get("/vms/{vm}/history", getMyVMHistoryHandler(db))
+				r.Post("/vms/{vm}/power", vmPowerHandler(db, vmClient))
+
+				r.Group(func(r chi.Router) {
+					r.Use(auth.RequireAdmin)
+					r.Get("/admin/users", listUsersHandler(db))
+					r.Post("/admin/users", createUserHandler(db))
+					r.Patch("/admin/users/{id}", updateUserHandler(db))
+					r.Delete("/admin/users/{id}", deleteUserHandler(db))
+
+					r.Get("/admin/invites", listInvitesHandler(db))
+					r.Post("/admin/invites", generateInviteHandler(db))
+					r.Delete("/admin/invites/{id}", deleteInviteHandler(db))
+
+					r.Get("/admin/settings", getSettingsHandler(db))
+					r.Patch("/admin/settings", updateSettingsHandler(db))
+
+					r.Get("/admin/vms", listAllVMsHandler(vmClient))
+					r.Get("/admin/vm-assignments", listAssignmentsHandler(db))
+					r.Post("/admin/vm-assignments", createAssignmentHandler(db, vmClient))
+					r.Delete("/admin/vm-assignments/{id}", deleteAssignmentHandler(db))
+					r.Post("/admin/vms/{vm}/power", adminVMPowerHandler(db, vmClient))
+				})
 			})
 		}
 	})
@@ -284,8 +317,9 @@ func registerHandler(authSvc *auth.Auth, db *sql.DB, cfg *config.Config) http.Ha
 		}
 
 		var req struct {
-			Username string `json:"username"`
-			Password string `json:"password"`
+			Username   string `json:"username"`
+			Password   string `json:"password"`
+			InviteCode string `json:"invite_code"`
 		}
 		if !decodeJSON(w, r, &req) {
 			return
@@ -310,6 +344,22 @@ func registerHandler(authSvc *auth.Auth, db *sql.DB, cfg *config.Config) http.Ha
 			return
 		}
 
+		// First user becomes admin (and bypasses invite-only — bootstrapping)
+		var userCount int
+		db.QueryRow("SELECT COUNT(*) FROM users").Scan(&userCount)
+		role := "user"
+		if userCount == 0 {
+			role = "admin"
+		}
+
+		// If invite-only mode is on (and we're past bootstrapping), require a valid code.
+		requireInvite := userCount > 0 && inviteOnlyEnabled(db)
+		req.InviteCode = strings.ToUpper(strings.TrimSpace(req.InviteCode))
+		if requireInvite && req.InviteCode == "" {
+			http.Error(w, "invite code required", http.StatusForbidden)
+			return
+		}
+
 		// Hash password
 		hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), 10)
 		if err != nil {
@@ -318,20 +368,39 @@ func registerHandler(authSvc *auth.Auth, db *sql.DB, cfg *config.Config) http.Ha
 			return
 		}
 
-		// First user becomes admin
-		var userCount int
-		db.QueryRow("SELECT COUNT(*) FROM users").Scan(&userCount)
-		role := "user"
-		if userCount == 0 {
-			role = "admin"
+		// Atomically: create user, consume invite code (if applicable). If consume
+		// fails, the user is rolled back so a stale/used code can't leak an account.
+		tx, err := db.Begin()
+		if err != nil {
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
 		}
+		defer tx.Rollback()
 
-		_, err = db.Exec(
+		res, err := tx.Exec(
 			"INSERT INTO users (username, password_hash, role, active) VALUES (?, ?, ?, 1)",
 			req.Username, string(hash), role,
 		)
 		if err != nil {
 			slog.Error("failed to create user", "error", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		newUserID, _ := res.LastInsertId()
+
+		if requireInvite {
+			if err := consumeInviteCode(tx, req.InviteCode, newUserID); err != nil {
+				if err == sql.ErrNoRows {
+					http.Error(w, "invalid or expired invite code", http.StatusForbidden)
+					return
+				}
+				slog.Error("consume invite", "error", err)
+				http.Error(w, "internal error", http.StatusInternalServerError)
+				return
+			}
+		}
+
+		if err := tx.Commit(); err != nil {
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
@@ -351,9 +420,12 @@ func registerHandler(authSvc *auth.Auth, db *sql.DB, cfg *config.Config) http.Ha
 	}
 }
 
-func signupsEnabledHandler(cfg *config.Config) http.HandlerFunc {
+func signupsEnabledHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, map[string]bool{"enabled": cfg.SignupsAllowed()})
+		writeJSON(w, map[string]bool{
+			"enabled":             cfg.SignupsAllowed(),
+			"invite_only_enabled": inviteOnlyEnabled(db),
+		})
 	}
 }
 
@@ -480,23 +552,33 @@ func listServicesHandler(db *sql.DB) http.HandlerFunc {
 				"url":        s.url,
 				"is_healthy": s.isHealthy.Valid && s.isHealthy.Bool,
 			}
-			// Compute uptime for 7d, 30d, 365d from daily summaries
-			for _, window := range []struct {
-				key  string
-				days int
+			// One query per service computes all uptime windows in a single
+			// pass over the daily summaries (vs. one round-trip per window).
+			var t7, t30, t90, t365, h7, h30, h90, h365 sql.NullInt64
+			db.QueryRow(`
+				SELECT
+					SUM(CASE WHEN date >= date('now','-7 days')   THEN total_checks   END),
+					SUM(CASE WHEN date >= date('now','-7 days')   THEN healthy_checks END),
+					SUM(CASE WHEN date >= date('now','-30 days')  THEN total_checks   END),
+					SUM(CASE WHEN date >= date('now','-30 days')  THEN healthy_checks END),
+					SUM(CASE WHEN date >= date('now','-90 days')  THEN total_checks   END),
+					SUM(CASE WHEN date >= date('now','-90 days')  THEN healthy_checks END),
+					SUM(CASE WHEN date >= date('now','-365 days') THEN total_checks   END),
+					SUM(CASE WHEN date >= date('now','-365 days') THEN healthy_checks END)
+				FROM service_daily_summaries
+				WHERE service_id = ? AND date >= date('now','-365 days')
+			`, s.id).Scan(&t7, &h7, &t30, &h30, &t90, &h90, &t365, &h365)
+			for _, w := range []struct {
+				key             string
+				total, healthy  sql.NullInt64
 			}{
-				{"uptime_7d", 7},
-				{"uptime_30d", 30},
-				{"uptime_365d", 365},
+				{"uptime_7d", t7, h7},
+				{"uptime_30d", t30, h30},
+				{"uptime_90d", t90, h90},
+				{"uptime_365d", t365, h365},
 			} {
-				var total, healthy sql.NullInt64
-				db.QueryRow(
-					`SELECT SUM(total_checks), SUM(healthy_checks) FROM service_daily_summaries
-					 WHERE service_id = ? AND date >= date('now', ?)`,
-					s.id, fmt.Sprintf("-%d days", window.days),
-				).Scan(&total, &healthy)
-				if total.Valid && total.Int64 > 0 {
-					svc[window.key] = float64(healthy.Int64) * 100.0 / float64(total.Int64)
+				if w.total.Valid && w.total.Int64 > 0 {
+					svc[w.key] = float64(w.healthy.Int64) * 100.0 / float64(w.total.Int64)
 				}
 			}
 			results = append(results, svc)
@@ -505,12 +587,88 @@ func listServicesHandler(db *sql.DB) http.HandlerFunc {
 	}
 }
 
+// serviceRecentHandler returns 48 hourly buckets covering the last 48 hours.
+// Each bucket reports total_checks, healthy_checks, and a coarse status string
+// ("up" / "degraded" / "down" / "unknown" if no checks ran in that hour).
+// Status thresholds: up >= 99%, degraded >= 50%, down < 50%.
+func serviceRecentHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := chi.URLParam(r, "id")
+
+		// SQLite: bucket by hour using strftime, last 48h inclusive.
+		rows, err := db.Query(`
+			SELECT strftime('%Y-%m-%dT%H:00:00Z', checked_at) as bucket,
+				COUNT(*) as total,
+				SUM(CASE WHEN is_healthy THEN 1 ELSE 0 END) as healthy
+			FROM service_checks
+			WHERE service_id = ? AND checked_at >= datetime('now', '-48 hours')
+			GROUP BY bucket
+		`, id)
+		if err != nil {
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		defer rows.Close()
+
+		type bucketRow struct{ total, healthy int }
+		buckets := make(map[string]bucketRow)
+		for rows.Next() {
+			var b string
+			var br bucketRow
+			if err := rows.Scan(&b, &br.total, &br.healthy); err != nil {
+				continue
+			}
+			buckets[b] = br
+		}
+
+		// Build a contiguous 48-hour series ending at the current hour, so the UI
+		// can render a fixed-width strip even if some hours have no data.
+		now := time.Now().UTC().Truncate(time.Hour)
+		out := make([]map[string]interface{}, 0, 48)
+		for i := 47; i >= 0; i-- {
+			t := now.Add(-time.Duration(i) * time.Hour)
+			key := t.Format("2006-01-02T15:00:00Z")
+			br, ok := buckets[key]
+			status := "unknown"
+			var uptime float64
+			if ok && br.total > 0 {
+				uptime = float64(br.healthy) * 100.0 / float64(br.total)
+				switch {
+				case uptime >= 99:
+					status = "up"
+				case uptime >= 50:
+					status = "degraded"
+				default:
+					status = "down"
+				}
+			}
+			out = append(out, map[string]interface{}{
+				"hour":    key,
+				"total":   br.total,
+				"healthy": br.healthy,
+				"uptime":  uptime,
+				"status":  status,
+			})
+		}
+		writeJSON(w, out)
+	}
+}
+
 func serviceHistoryHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "id")
+		days := 90
+		if d := r.URL.Query().Get("days"); d != "" {
+			if n, err := strconv.Atoi(d); err == nil && n > 0 {
+				if n > 365 {
+					n = 365
+				}
+				days = n
+			}
+		}
 		rows, err := db.Query(
-			"SELECT date, total_checks, healthy_checks, avg_response_time_ms, uptime_percentage FROM service_daily_summaries WHERE service_id = ? ORDER BY date DESC LIMIT 90",
-			id,
+			"SELECT date, total_checks, healthy_checks, avg_response_time_ms, uptime_percentage FROM service_daily_summaries WHERE service_id = ? ORDER BY date DESC LIMIT ?",
+			id, days,
 		)
 		if err != nil {
 			http.Error(w, "internal error", http.StatusInternalServerError)
@@ -537,6 +695,22 @@ func serviceHistoryHandler(db *sql.DB) http.HandlerFunc {
 }
 
 // --- Message Handlers ---
+
+// validMessageCategories mirrors the dropdown on the frontend. Anything else
+// is silently coerced to "info" rather than persisted, so a stale or hostile
+// client can't pollute the table with junk values.
+var validMessageCategories = map[string]struct{}{
+	"info":        {},
+	"update":      {},
+	"maintenance": {},
+}
+
+func normalizeMessageCategory(c string) string {
+	if _, ok := validMessageCategories[c]; ok {
+		return c
+	}
+	return "info"
+}
 
 func listMessagesHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -584,12 +758,10 @@ func createMessageHandler(db *sql.DB) http.HandlerFunc {
 			http.Error(w, "field too long", http.StatusBadRequest)
 			return
 		}
-		if req.Category == "" {
-			req.Category = "info"
-		}
+		category := normalizeMessageCategory(req.Category)
 		_, err := db.Exec(
 			"INSERT INTO messages (title, body, category, pinned, author) VALUES (?, ?, ?, ?, ?)",
-			req.Title, req.Body, req.Category, req.Pinned, auth.GetUsername(claims),
+			req.Title, req.Body, category, req.Pinned, auth.GetUsername(claims),
 		)
 		if err != nil {
 			slog.Error("failed to create message", "error", err)
@@ -618,7 +790,7 @@ func updateMessageHandler(db *sql.DB) http.HandlerFunc {
 		}
 		_, err := db.Exec(
 			"UPDATE messages SET title = ?, body = ?, category = ?, pinned = ?, updated_at = datetime('now') WHERE id = ?",
-			req.Title, req.Body, req.Category, req.Pinned, id,
+			req.Title, req.Body, normalizeMessageCategory(req.Category), req.Pinned, id,
 		)
 		if err != nil {
 			http.Error(w, "internal error", http.StatusInternalServerError)
@@ -707,18 +879,7 @@ func hostsHandler(hosts []config.HostConfig) http.HandlerFunc {
 
 func ipLookupSelfHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		ip := r.RemoteAddr
-		// Extract first IP from X-Forwarded-For if present
-		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-			ip = strings.TrimSpace(strings.SplitN(xff, ",", 2)[0])
-		} else {
-			// Strip port from RemoteAddr
-			host, _, err := net.SplitHostPort(ip)
-			if err == nil {
-				ip = host
-			}
-		}
-		doIPLookup(w, r, ip)
+		doIPLookup(w, r, clientIP(r))
 	}
 }
 

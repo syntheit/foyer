@@ -75,7 +75,7 @@
 			<button
 				type="submit"
 				disabled={loading || !username || !password}
-				class="inline-flex h-9 w-full items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground shadow transition-colors hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50"
+				class="inline-flex h-9 w-full cursor-pointer items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground shadow transition-colors hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50"
 			>
 				{loading ? 'Signing in…' : 'Sign in'}
 			</button>

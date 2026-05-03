@@ -111,6 +111,57 @@ func listPastesHandler(db *sql.DB) http.HandlerFunc {
 	}
 }
 
+func updatePasteHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		_, claims, _ := jwtauth.FromContext(r.Context())
+		username := auth.GetUsername(claims)
+		pasteID := chi.URLParam(r, "id")
+
+		var createdBy string
+		err := db.QueryRow("SELECT created_by FROM pastes WHERE id = ?", pasteID).Scan(&createdBy)
+		if err == sql.ErrNoRows {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		if err != nil {
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		if createdBy != username && !auth.IsAdmin(claims) {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+
+		var req struct {
+			Content  string `json:"content"`
+			Language string `json:"language"`
+		}
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		if req.Content == "" {
+			http.Error(w, "content is required", http.StatusBadRequest)
+			return
+		}
+		if len(req.Content) > 500000 {
+			http.Error(w, "paste too large (max 500KB)", http.StatusBadRequest)
+			return
+		}
+		if req.Language == "" {
+			req.Language = "plaintext"
+		}
+
+		if _, err := db.Exec(
+			"UPDATE pastes SET content = ?, language = ? WHERE id = ?",
+			req.Content, req.Language, pasteID,
+		); err != nil {
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
 func deletePasteHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		_, claims, _ := jwtauth.FromContext(r.Context())
@@ -142,14 +193,14 @@ func viewPasteHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		pasteID := chi.URLParam(r, "id")
 
-		var content, language, createdAt string
+		var content, language, createdAt, createdBy string
 		var burnAfterRead, burned bool
 		var expiresAt sql.NullString
 
 		err := db.QueryRow(
-			`SELECT content, language, burn_after_read, burned, created_at, expires_at
+			`SELECT content, language, burn_after_read, burned, created_at, expires_at, created_by
 			 FROM pastes WHERE id = ?`, pasteID,
-		).Scan(&content, &language, &burnAfterRead, &burned, &createdAt, &expiresAt)
+		).Scan(&content, &language, &burnAfterRead, &burned, &createdAt, &expiresAt, &createdBy)
 
 		if err == sql.ErrNoRows {
 			http.Error(w, "not found", http.StatusNotFound)
@@ -182,6 +233,7 @@ func viewPasteHandler(db *sql.DB) http.HandlerFunc {
 		result := map[string]interface{}{
 			"id": pasteID, "content": content, "language": language,
 			"burn_after_read": burnAfterRead, "created_at": createdAt,
+			"created_by": createdBy,
 		}
 		if expiresAt.Valid {
 			result["expires_at"] = expiresAt.String

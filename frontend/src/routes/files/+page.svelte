@@ -199,14 +199,14 @@
 				<div class="flex items-center gap-1">
 					<button
 						onclick={() => copyLink(file.url)}
-						class="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+						class="cursor-pointer rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
 						title="Copy link"
 					>
 						<Link class="h-4 w-4" />
 					</button>
 					<button
 						onclick={() => deleteFile(file.id)}
-						class="rounded-md p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+						class="cursor-pointer rounded-md p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
 						title="Delete"
 					>
 						<Trash2 class="h-4 w-4" />

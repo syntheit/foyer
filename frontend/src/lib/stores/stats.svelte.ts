@@ -57,6 +57,27 @@ export type Stats = {
 			status: string;
 		}>;
 	} | null;
+	services: {
+		jellyfin?: { active_streams: number };
+		minecraft?: {
+			online: boolean;
+			players: number;
+			max_players: number;
+			version?: string;
+		};
+	};
+	vms: {
+		total: number;
+		running: number;
+		total_memory_mb: number;
+		total_vcpus: number;
+		vms: Array<{
+			name: string;
+			state: string;
+			memory_mb: number;
+			vcpus: number;
+		}>;
+	} | null;
 	system: {
 		hostname: string;
 		kernel: string;

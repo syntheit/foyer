@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/dmiller/foyer/internal/config"
+	"github.com/dmiller/foyer/internal/vms"
 )
 
 const (
@@ -27,6 +28,7 @@ type Stats struct {
 	GPU          *GPUStats     `json:"gpu"`
 	Docker       *DockerStats  `json:"docker"`
 	Services     ServicesStats `json:"services"`
+	VMs          *vms.Stats    `json:"vms"`
 	System       SystemStats   `json:"system"`
 }
 
@@ -127,6 +129,8 @@ type Collector struct {
 	prevNet            map[string]netCounters
 	lastDocker         time.Time
 	cachedDocker       *DockerStats
+	lastVMs            time.Time
+	cachedVMs          *vms.Stats
 	temperatureCommand string
 	lastTempCmd        time.Time
 	cachedTempCmd      TempStats
@@ -209,6 +213,11 @@ func (c *Collector) collect() {
 		c.lastDocker = now
 	}
 	stats.Docker = c.cachedDocker
+	if time.Since(c.lastVMs) >= dockerInterval {
+		c.cachedVMs = vms.Collect()
+		c.lastVMs = now
+	}
+	stats.VMs = c.cachedVMs
 	stats.Services = CollectServices(c.cfg, c.servicesClient)
 
 	c.mu.Lock()

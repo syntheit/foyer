@@ -74,7 +74,7 @@
 		<button
 			type="submit"
 			disabled={loading || !address.trim()}
-			class="inline-flex items-center gap-1.5 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+			class="inline-flex cursor-pointer items-center gap-1.5 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
 		>
 			<Search class="h-4 w-4" />
 			Lookup
@@ -83,7 +83,7 @@
 			type="button"
 			onclick={lookupSelf}
 			disabled={loading}
-			class="inline-flex items-center gap-1.5 rounded-md border border-input bg-background px-4 py-2 text-sm text-foreground hover:bg-accent disabled:opacity-50"
+			class="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-input bg-background px-4 py-2 text-sm text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
 		>
 			<Globe class="h-4 w-4" />
 			My IP

@@ -6,7 +6,9 @@ require (
 	github.com/coder/websocket v1.8.14
 	github.com/go-chi/chi/v5 v5.2.5
 	github.com/go-chi/jwtauth/v5 v5.4.0
+	github.com/jaevor/go-nanoid v1.4.0
 	golang.org/x/crypto v0.50.0
+	golang.org/x/sync v0.20.0
 	modernc.org/sqlite v1.49.1
 )
 
@@ -15,7 +17,6 @@ require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/goccy/go-json v0.10.3 // indirect
 	github.com/google/uuid v1.6.0 // indirect
-	github.com/jaevor/go-nanoid v1.4.0 // indirect
 	github.com/lestrrat-go/blackmagic v1.0.3 // indirect
 	github.com/lestrrat-go/httpcc v1.0.1 // indirect
 	github.com/lestrrat-go/httprc/v3 v3.0.0-beta2 // indirect

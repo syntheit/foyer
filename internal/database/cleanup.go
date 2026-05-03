@@ -22,6 +22,12 @@ func Cleanup(db *sql.DB, dataDir string) error {
 	if err := cleanupWebhookEvents(db); err != nil {
 		return fmt.Errorf("cleanup webhook events: %w", err)
 	}
+	if err := cleanupAuditLog(db); err != nil {
+		return fmt.Errorf("cleanup audit log: %w", err)
+	}
+	if err := cleanupVMSamples(db); err != nil {
+		return fmt.Errorf("cleanup vm samples: %w", err)
+	}
 	return nil
 }
 
@@ -89,6 +95,30 @@ func cleanupWebhookEvents(db *sql.DB) error {
 	count, _ := result.RowsAffected()
 	if count > 0 {
 		slog.Info("cleaned up old webhook events", "count", count)
+	}
+	return nil
+}
+
+func cleanupAuditLog(db *sql.DB) error {
+	result, err := db.Exec("DELETE FROM audit_log WHERE created_at < datetime('now', '-180 days')")
+	if err != nil {
+		return err
+	}
+	count, _ := result.RowsAffected()
+	if count > 0 {
+		slog.Info("cleaned up old audit entries", "count", count)
+	}
+	return nil
+}
+
+func cleanupVMSamples(db *sql.DB) error {
+	result, err := db.Exec("DELETE FROM vm_metric_samples WHERE sampled_at < datetime('now', '-90 days')")
+	if err != nil {
+		return err
+	}
+	count, _ := result.RowsAffected()
+	if count > 0 {
+		slog.Info("cleaned up old vm samples", "count", count)
 	}
 	return nil
 }

@@ -56,6 +56,7 @@ buildGoModule {
       [
         "."
         "./cmd/api"
+        "./cmd/foyer-vm-controller"
       ]
     else
       [ "./cmd/api" ];

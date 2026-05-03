@@ -89,6 +89,7 @@ func main() {
 		checker := services.NewChecker(db)
 		go checker.Run(ctx)
 	}
+	server.StartRateBucketSweeper(ctx)
 	router := server.New(cfg, db, collector, hub, frontendFS, devMode)
 
 	srv := &http.Server{
