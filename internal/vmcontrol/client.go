@@ -32,7 +32,8 @@ func (c *Client) Call(action, vm string) (*Response, error) {
 	if !IsActionAllowed(action) {
 		return nil, fmt.Errorf("action not allowed: %s", action)
 	}
-	if action != ActionList && !ValidVMName(vm) {
+	// list/list_info don't take a VM name; everything else must be valid.
+	if action != ActionList && action != ActionListInfo && !ValidVMName(vm) {
 		return nil, fmt.Errorf("invalid vm name")
 	}
 
