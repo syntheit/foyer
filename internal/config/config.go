@@ -19,7 +19,6 @@ type Config struct {
 	APIKeys        []string        `json:"api_keys"`
 	APIKeyFiles    []string        `json:"api_key_files"`
 	AuthorizedKeys []string        `json:"authorized_keys"`
-	Users        []UserConfig    `json:"users"`
 	Services     []ServiceConfig `json:"services"`
 	Hosts        []HostConfig    `json:"hosts"`
 	Jellyfin     *JellyfinConfig `json:"jellyfin"`
@@ -29,13 +28,6 @@ type Config struct {
 
 type MinecraftConfig struct {
 	Address string `json:"address"` // host:port, e.g. "localhost:25565"
-}
-
-type UserConfig struct {
-	Username         string `json:"username"`
-	PasswordHash     string `json:"password_hash"`
-	PasswordHashFile string `json:"password_hash_file"`
-	Role             string `json:"role"`
 }
 
 type ServiceConfig struct {
@@ -103,20 +95,6 @@ func Load(path string, jwtSecretFile string) (*Config, error) {
 			return nil, fmt.Errorf("read API key file %s: %w", keyFile, err)
 		}
 		cfg.APIKeys = append(cfg.APIKeys, key)
-	}
-
-	// Load user password hashes from files
-	for i := range cfg.Users {
-		if cfg.Users[i].PasswordHashFile != "" {
-			hash, err := readSecretFile(cfg.Users[i].PasswordHashFile)
-			if err != nil {
-				return nil, fmt.Errorf("read password hash for %s: %w", cfg.Users[i].Username, err)
-			}
-			cfg.Users[i].PasswordHash = hash
-		}
-		if cfg.Users[i].Role == "" {
-			cfg.Users[i].Role = "user"
-		}
 	}
 
 	// Disable Jellyfin if no API key configured

@@ -55,11 +55,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := database.SyncUsers(db, cfg.Users); err != nil {
-		slog.Error("failed to sync users", "error", err)
-		os.Exit(1)
-	}
-
 	if err := database.SyncServices(db, cfg.Services); err != nil {
 		slog.Error("failed to sync services", "error", err)
 		os.Exit(1)
