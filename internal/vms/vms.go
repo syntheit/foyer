@@ -1,15 +1,14 @@
-// Package vms reports libvirt VM stats. Shells out to `virsh` so we don't
-// take a libvirt-go dep — VM state is small and updates infrequently, so the
-// cost of fork+exec is acceptable on the collector's tick.
+// Package vms reports libvirt VM aggregate stats for the host dashboard tile.
+//
+// Foyer itself has no libvirt access; we ask foyer-vm-controller over its Unix
+// socket. If the socket isn't configured (e.g. libvirtd disabled, dev mode),
+// Collect returns nil and the dashboard hides the tile.
 package vms
 
 import (
-	"bufio"
-	"context"
-	"os/exec"
 	"strconv"
-	"strings"
-	"time"
+
+	"github.com/dmiller/foyer/internal/vmcontrol"
 )
 
 type Stats struct {
@@ -27,26 +26,36 @@ type VMInfo struct {
 	VCPUs    int    `json:"vcpus"`
 }
 
-const uri = "qemu:///system"
-
-// Collect returns nil if virsh is unavailable or libvirtd isn't reachable.
-func Collect() *Stats {
-	if _, err := exec.LookPath("virsh"); err != nil {
+// Collect returns nil when no controller socket is configured. Errors talking
+// to the controller also yield nil — the dashboard tile is best-effort.
+func Collect(socketPath string) *Stats {
+	if socketPath == "" {
+		return nil
+	}
+	resp, err := vmcontrol.NewClient(socketPath).Call(vmcontrol.ActionListInfo, "")
+	if err != nil || resp == nil {
+		return nil
+	}
+	rows, ok := resp.Data.([]interface{})
+	if !ok {
 		return nil
 	}
 
-	names, err := listDomains()
-	if err != nil {
-		return nil
-	}
-
-	stats := &Stats{VMs: make([]VMInfo, 0, len(names))}
-	for _, name := range names {
-		info := domInfo(name)
-		if info == nil {
+	stats := &Stats{VMs: make([]VMInfo, 0, len(rows))}
+	for _, r := range rows {
+		m, ok := r.(map[string]interface{})
+		if !ok {
 			continue
 		}
-		stats.VMs = append(stats.VMs, *info)
+		info := VMInfo{
+			Name:  asString(m["name"]),
+			State: asString(m["state"]),
+			VCPUs: int(asUint64(m["vcpus"])),
+		}
+		// Controller reports KiB; the existing dashboard tile expects MB.
+		info.MemoryMB = asUint64(m["mem_max_kib"]) / 1024
+
+		stats.VMs = append(stats.VMs, info)
 		stats.Total++
 		if info.State == "running" {
 			stats.Running++
@@ -57,53 +66,20 @@ func Collect() *Stats {
 	return stats
 }
 
-func listDomains() ([]string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	out, err := exec.CommandContext(ctx, "virsh", "-c", uri, "list", "--all", "--name").Output()
-	if err != nil {
-		return nil, err
+func asString(v interface{}) string {
+	if s, ok := v.(string); ok {
+		return s
 	}
-	var names []string
-	sc := bufio.NewScanner(strings.NewReader(string(out)))
-	for sc.Scan() {
-		n := strings.TrimSpace(sc.Text())
-		if n != "" {
-			names = append(names, n)
-		}
-	}
-	return names, nil
+	return ""
 }
 
-func domInfo(name string) *VMInfo {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	out, err := exec.CommandContext(ctx, "virsh", "-c", uri, "dominfo", name).Output()
-	if err != nil {
-		return nil
+func asUint64(v interface{}) uint64 {
+	switch n := v.(type) {
+	case float64:
+		return uint64(n)
+	case string:
+		u, _ := strconv.ParseUint(n, 10, 64)
+		return u
 	}
-
-	info := &VMInfo{Name: name, State: "unknown"}
-	sc := bufio.NewScanner(strings.NewReader(string(out)))
-	for sc.Scan() {
-		k, v, ok := strings.Cut(sc.Text(), ":")
-		if !ok {
-			continue
-		}
-		v = strings.TrimSpace(v)
-		switch strings.TrimSpace(k) {
-		case "State":
-			info.State = v
-		case "CPU(s)":
-			info.VCPUs, _ = strconv.Atoi(v)
-		case "Used memory":
-			// "1048576 KiB"
-			fields := strings.Fields(v)
-			if len(fields) > 0 {
-				kib, _ := strconv.ParseUint(fields[0], 10, 64)
-				info.MemoryMB = kib / 1024
-			}
-		}
-	}
-	return info
+	return 0
 }

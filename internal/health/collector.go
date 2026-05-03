@@ -214,7 +214,7 @@ func (c *Collector) collect() {
 	}
 	stats.Docker = c.cachedDocker
 	if time.Since(c.lastVMs) >= dockerInterval {
-		c.cachedVMs = vms.Collect()
+		c.cachedVMs = vms.Collect(c.cfg.VMControllerSocket)
 		c.lastVMs = now
 	}
 	stats.VMs = c.cachedVMs

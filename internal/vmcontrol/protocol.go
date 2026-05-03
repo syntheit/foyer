@@ -33,16 +33,18 @@ type Response struct {
 
 // Allowed actions. The controller will reject anything not in this set.
 const (
-	ActionList     = "list"     // list all defined domains (admin only at the foyer layer)
-	ActionInfo     = "info"     // virsh dominfo — state, memory, vcpus
-	ActionStats    = "stats"    // virsh domstats + domblkstat + domifstat
-	ActionReboot   = "reboot"   // graceful reboot (ACPI)
-	ActionShutdown = "shutdown" // graceful shutdown (ACPI)
+	ActionList      = "list"      // names only — for picker UI / cheap polls
+	ActionListInfo  = "list_info" // bulk: array of {name,state,vcpus,mem_max_kib}
+	ActionInfo      = "info"      // virsh dominfo — state, memory, vcpus
+	ActionStats     = "stats"     // virsh domstats + domblkstat + domifstat
+	ActionReboot    = "reboot"    // graceful reboot (ACPI)
+	ActionShutdown  = "shutdown"  // graceful shutdown (ACPI)
 )
 
 // AllowedActions is the canonical allowlist. Any change here must be reviewed.
 var AllowedActions = map[string]struct{}{
 	ActionList:     {},
+	ActionListInfo: {},
 	ActionInfo:     {},
 	ActionStats:    {},
 	ActionReboot:   {},

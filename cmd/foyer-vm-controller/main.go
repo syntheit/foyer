@@ -198,8 +198,8 @@ func (s *server) handle(conn net.Conn) {
 		return
 	}
 
-	// VM name validation — except for `list` which doesn't need one.
-	if req.Action != vmcontrol.ActionList {
+	// VM name validation — except for `list`/`list_info` which don't need one.
+	if req.Action != vmcontrol.ActionList && req.Action != vmcontrol.ActionListInfo {
 		if !vmcontrol.ValidVMName(req.VM) {
 			slog.Warn("rejected invalid vm name", "vm", req.VM)
 			writeError(conn, "invalid vm name")
@@ -262,6 +262,38 @@ func (s *server) vmExists(name string) bool {
 
 func (s *server) execute(req vmcontrol.Request) vmcontrol.Response {
 	switch req.Action {
+	case vmcontrol.ActionListInfo:
+		out, err := runVirsh(commandTimeout, "list", "--all", "--name")
+		if err != nil {
+			return errResp("list failed")
+		}
+		type row struct {
+			Name      string `json:"name"`
+			State     string `json:"state"`
+			VCPUs     int    `json:"vcpus"`
+			MemMaxKiB uint64 `json:"mem_max_kib"`
+		}
+		var rows []row
+		for _, l := range strings.Split(out, "\n") {
+			name := strings.TrimSpace(l)
+			if name == "" {
+				continue
+			}
+			r := row{Name: name, State: "unknown"}
+			if info, err := runVirsh(commandTimeout, "dominfo", name); err == nil {
+				kv := parseKeyValue(info)
+				r.State = kv["State"]
+				r.VCPUs, _ = strconv.Atoi(kv["CPU(s)"])
+				if v, ok := kv["Used memory"]; ok {
+					if fields := strings.Fields(v); len(fields) > 0 {
+						r.MemMaxKiB = parseU64(fields[0])
+					}
+				}
+			}
+			rows = append(rows, r)
+		}
+		return vmcontrol.Response{OK: true, Data: rows}
+
 	case vmcontrol.ActionList:
 		out, err := runVirsh(commandTimeout, "list", "--all", "--name")
 		if err != nil {
