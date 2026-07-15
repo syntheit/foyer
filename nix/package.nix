@@ -23,8 +23,8 @@ let
     pnpmDeps = fetchPnpmDeps {
       pname = "foyer-frontend";
       src = ../frontend;
-      hash = "sha256-fCgKNSFxbw7VQo1ZnMMJeq8eXTWUGV8iwvjFh1Qa+kE=";
-      fetcherVersion = 3;
+      hash = "sha256-JCVcnAQBlnrqU5pBOG47dD6WPiBachMV4OEoJ4z/lGo=";
+      fetcherVersion = 4;
     };
 
     buildPhase = ''
