@@ -47,12 +47,12 @@ buildGoModule {
 
   vendorHash = "sha256-3Rc8uI+BLwS2/QO3FTRrR094KN+2BMrozlvoUiRSDvI=";
 
-  preBuild = lib.optionalString stdenv.isLinux ''
+  preBuild = lib.optionalString stdenv.hostPlatform.isLinux ''
     cp -r ${frontend} frontend/build
   '';
 
   subPackages =
-    if stdenv.isLinux then
+    if stdenv.hostPlatform.isLinux then
       [
         "."
         "./cmd/api"
