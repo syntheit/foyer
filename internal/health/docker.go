@@ -7,7 +7,11 @@ import (
 )
 
 func collectDocker() *DockerStats {
-	out, err := exec.Command("docker", "ps", "-a", "--format", "{{json .}}").Output()
+	// Name the fields: with "{{json .}}" the CLI also requests sizes, and
+	// dockerd walks every container's filesystem to compute them (seconds of
+	// CPU per call on the btrfs storage driver).
+	out, err := exec.Command("docker", "ps", "-a", "--format",
+		`{"Names":{{json .Names}},"Image":{{json .Image}},"State":{{json .State}},"Status":{{json .Status}}}`).Output()
 	if err != nil {
 		return nil
 	}
